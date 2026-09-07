@@ -1,16 +1,28 @@
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:geo_tile_builder/geo_tile_builder.dart';
 
-/// Builds a small PMTiles archive from synthetic vector tiles.
+/// Balneário Camboriú and a margin of ocean around it.
+const _minLon = -48.72;
+const _minLat = -27.05;
+const _maxLon = -48.55;
+const _maxLat = -26.94;
+
+/// The coastline runs roughly north–south through the city; everything east of
+/// it is the Atlantic.
+const _shoreLon = -48.625;
+
+const _minZoom = 10;
+const _maxZoom = 15;
+
+/// Builds a real PMTiles archive from synthetic geometry.
 ///
-/// The output is a real archive: MapLibre will render it over `pmtiles://`,
-/// and any PMTiles reader will open it. It draws a diagonal "road" across a
-/// block of tiles around Balneário Camboriú and fills the rest with open
-/// water — which is the point of the demo, because every water tile is
-/// byte-identical and so collapses into a single stored blob.
+/// The output opens in any PMTiles reader and renders in MapLibre over
+/// `pmtiles://`. It draws an avenue along the shore and fills the sea beside
+/// it, which is what makes the writer's two reductions visible: every open-sea
+/// tile is byte-identical, so they collapse to a single stored blob and, where
+/// they are adjacent along the Hilbert curve, into single directory entries.
 ///
 /// ```sh
 /// dart run example/geo_tile_builder_example.dart
@@ -18,12 +30,6 @@ import 'package:geo_tile_builder/geo_tile_builder.dart';
 /// ```
 Future<void> main(List<String> args) async {
   final output = args.isEmpty ? 'example-demo.pmtiles' : args.first;
-
-  // A block of z14 tiles covering the city and some ocean around it.
-  const zoom = 14;
-  const originX = 6180;
-  const originY = 9400;
-  const span = 16;
 
   final writer = PmTilesWriter(
     metadata: {
@@ -41,35 +47,45 @@ Future<void> main(List<String> args) async {
         },
       ],
     },
-    minLon: -48.72,
-    minLat: -27.05,
-    maxLon: -48.55,
-    maxLat: -26.94,
+    minLon: _minLon,
+    minLat: _minLat,
+    maxLon: _maxLon,
+    maxLat: _maxLat,
+    centerLon: (_minLon + _maxLon) / 2,
+    centerLat: (_minLat + _maxLat) / 2,
+    centerZoom: 13,
   );
 
   const encoder = MvtEncoder();
-  var drawn = 0;
+  var roadTiles = 0;
+  var seaTiles = 0;
+  Uint8List? seaBytes;
 
-  // Tiles must be added in tile-id order, so collect and sort first — the
-  // Hilbert curve does not follow row-major x/y.
-  final ids = <int, (int, int)>{};
-  for (var x = originX; x < originX + span; x++) {
-    for (var y = originY; y < originY + span; y++) {
-      ids[TileId.fromZxy(zoom, x, y)] = (x, y);
-    }
-  }
+  // Zoom ascending, and within each zoom in tile-id order, so the whole
+  // sequence is ascending as the writer requires.
+  for (var z = _minZoom; z <= _maxZoom; z++) {
+    for (final tile in Mercator.coverage(
+      _minLon,
+      _minLat,
+      _maxLon,
+      _maxLat,
+      z,
+    )) {
+      final (west, _, east, _) = Mercator.boundsOf(tile);
 
-  for (final id in ids.keys.toList()..sort()) {
-    final (x, y) = ids[id]!;
-    final tile = _tileFor(x, y);
-    if (tile == null) {
-      // Open water: the same bytes in every such tile, which is what lets the
-      // writer store one copy and run-length encode the addresses.
-      writer.add(id, _waterBytes ??= encoder.encode(_waterTile));
-      continue;
+      // Wholly offshore: the same sea tile everywhere.
+      if (west >= _shoreLon) {
+        seaTiles++;
+        writer.add(TileId.of(tile), seaBytes ??= encoder.encode(_seaTile));
+        continue;
+      }
+
+      // Wholly inland: nothing to draw in this demo.
+      if (east < _shoreLon) continue;
+
+      roadTiles++;
+      writer.add(TileId.of(tile), encoder.encode(_coastTile(tile)));
     }
-    drawn++;
-    writer.add(id, encoder.encode(tile));
   }
 
   final bytes = writer.build();
@@ -80,7 +96,8 @@ Future<void> main(List<String> args) async {
     ..writeln('Wrote $output')
     ..writeln('')
     ..writeln('  zoom range        z${header.minZoom}-${header.maxZoom}')
-    ..writeln('  tiles with roads  $drawn')
+    ..writeln('  coast tiles       $roadTiles')
+    ..writeln('  open-sea tiles    $seaTiles')
     ..writeln('  addressed tiles   ${header.addressedTilesCount}')
     ..writeln('  directory entries ${header.tileEntriesCount}')
     ..writeln('  distinct blobs    ${header.tileContentsCount}')
@@ -95,14 +112,11 @@ Future<void> main(List<String> args) async {
     );
 }
 
-/// Encoded once and reused, the way a real pipeline would cache it.
-Uint8List? _waterBytes;
-
-/// A tile that is nothing but open water, filling its whole extent.
+/// A tile that is nothing but open sea, filling its whole extent.
 ///
 /// The ring winds clockwise on screen — positive area with Y pointing down —
 /// which is how the format marks an exterior ring rather than a hole.
-const _waterTile = MvtTile(
+const _seaTile = MvtTile(
   layers: [
     MvtLayer(
       name: 'water',
@@ -124,36 +138,44 @@ const _waterTile = MvtTile(
   ],
 );
 
-/// Draws a diagonal road through tiles on the `x == y` diagonal of the block,
-/// or returns null where there is nothing to draw.
-MvtTile? _tileFor(int x, int y) {
-  const originX = 6180;
-  const originY = 9400;
-  final dx = x - originX;
-  final dy = y - originY;
-  if (dx != dy && dx != dy + 1) return null;
+/// A tile straddling the shore: sea to the east, an avenue along the coast.
+MvtTile _coastTile(Zxy tile) {
+  final (_, south, _, north) = Mercator.boundsOf(tile);
 
-  // A line crossing the tile, with a little jitter so tiles differ from one
-  // another and cannot be deduplicated.
-  final rnd = Random(x * 31 + y);
-  final wobble = rnd.nextInt(512);
+  // The shore as a vertical line in this tile's own coordinates, extended past
+  // the tile edges so adjacent tiles join up without a seam.
+  final top = Mercator.project(_shoreLon, north, tile);
+  final bottom = Mercator.project(_shoreLon, south, tile);
 
   return MvtTile(
     layers: [
       MvtLayer(
+        name: 'water',
+        features: [
+          MvtFeature(
+            type: MvtGeomType.polygon,
+            parts: [
+              [
+                MvtPoint(top.x, -64),
+                const MvtPoint(4160, -64),
+                const MvtPoint(4160, 4160),
+                MvtPoint(bottom.x, 4160),
+              ],
+            ],
+            attributes: const {'class': 'ocean'},
+          ),
+        ],
+      ),
+      MvtLayer(
         name: 'road',
         features: [
           MvtFeature(
-            id: dx + 1,
+            id: TileId.of(tile),
             type: MvtGeomType.lineString,
             parts: [
-              [
-                const MvtPoint(0, 0),
-                MvtPoint(2048 + wobble, 2048),
-                const MvtPoint(4096, 4096),
-              ],
+              [MvtPoint(top.x - 96, -64), MvtPoint(bottom.x - 96, 4160)],
             ],
-            attributes: const {'class': 'primary', 'name': '5ª Avenida'},
+            attributes: const {'class': 'primary', 'name': 'Avenida Atlântica'},
           ),
         ],
       ),
