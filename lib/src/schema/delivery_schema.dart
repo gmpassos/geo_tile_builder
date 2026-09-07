@@ -150,7 +150,11 @@ class DeliverySchema implements TileSchema {
   }
 
   /// No node ever becomes a feature: this schema has no place labels and no
-  /// points of interest, which is a large part of why its tiles are small.
+  /// points of interest, which is a large part of why its tiles are small — and
+  /// why the node tag stream is never decoded at all.
+  @override
+  bool get readsNodes => false;
+
   @override
   ClassifiedFeature? node(GeoTaggedNode node) => null;
 

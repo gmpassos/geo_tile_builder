@@ -312,6 +312,10 @@ Uint8List buildOsmPbf({
   required List<OsmNode> nodes,
   required List<OsmWay> ways,
   List<OsmRelation> relations = const [],
+
+  /// Tags for individual nodes, by node id. Encoded into the dense node
+  /// `keys_vals` stream, which is how real files carry them.
+  Map<int, Map<String, String>> taggedNodes = const {},
   double minLon = -49.0,
   double minLat = -28.0,
   double maxLon = -48.0,
@@ -352,6 +356,23 @@ Uint8List buildOsmPbf({
         9,
         _deltas([for (final n in nodes) (n.lon / 1e-7).round()]),
       );
+
+    // Omitted entirely when nothing is tagged, as a real writer does.
+    if (taggedNodes.isNotEmpty) {
+      final keysVals = <int>[];
+      for (final node in nodes) {
+        (taggedNodes[node.id] ?? const {}).forEach((k, v) {
+          keysVals
+            ..add(intern(k))
+            ..add(intern(v));
+        });
+        // The terminator is present even for untagged nodes; omitting it
+        // shifts every later node's tags onto the wrong node.
+        keysVals.add(0);
+      }
+      dense.writePackedUint(10, keysVals);
+    }
+
     group.writeMessage(2, dense);
   }
 

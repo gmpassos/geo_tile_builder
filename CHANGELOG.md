@@ -33,6 +33,21 @@
     readers reject outright — found by the `pmtiles` oracle, not by inspection.
 - `TileBuildReport.tiles` documents that zero means an empty archive, whose
   empty directory strict readers reject: a failed build, not a small one.
+- `OpenMapTilesSchema` (new): a subset of the OpenMapTiles schema using its own
+  layer and field names, so an existing style — Dark Matter, Positron, OSM
+  Liberty — renders the output unmodified and degrades over the layers this
+  subset omits.
+  - Implements `transportation`, `transportation_name`, `water`, `waterway`,
+    `building` and `place`.
+  - On Monaco it costs **2x** the delivery schema (310 kB vs 158 kB), of which
+    buildings alone are 112 kB. That is the price of compatibility, now
+    measured rather than guessed.
+- **Point features.** `TileSchema.node` was declared but never called; tagged
+  nodes now become point features, which is what `place` labels are.
+  - `TileSchema.readsNodes` (new) declares whether a schema wants them. Node
+    tags live in a packed stream a reader can skip entirely, so a schema
+    without labels — `DeliverySchema` — never pays to decode tens of millions
+    of untagged shape points.
 
 ## 0.2.0
 

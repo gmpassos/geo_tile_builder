@@ -55,6 +55,7 @@ export 'src/geometry/ring_builder.dart';
 // Schema — the extension point deciding what a map contains.
 export 'src/schema/tile_schema.dart';
 export 'src/schema/delivery_schema.dart';
+export 'src/schema/open_map_tiles_schema.dart';
 
 // OpenStreetMap pipeline.
 export 'src/osm/node_store.dart';

@@ -121,10 +121,22 @@ abstract interface class TileSchema {
   /// Every layer this schema may emit.
   List<TileLayerSpec> get layers;
 
+  /// Whether [node] is ever consulted.
+  ///
+  /// Declared rather than discovered, because it is not free: node tags live in
+  /// a packed stream that a reader can skip entirely, and decoding it means
+  /// touching tens of millions of entries that are almost all untagged shape
+  /// points. A schema with no labels or points of interest should say `false`
+  /// and never pay for them.
+  bool get readsNodes;
+
   /// Classifies a way, or returns null to drop it.
   ClassifiedFeature? way(GeoWay way);
 
   /// Classifies a tagged node, or returns null to drop it.
+  ///
+  /// Only called when [readsNodes] is true. Untagged nodes are never offered —
+  /// a node with no tags describes nothing on its own.
   ClassifiedFeature? node(GeoTaggedNode node);
 
   /// Classifies a relation, or returns null to drop it.

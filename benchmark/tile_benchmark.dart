@@ -73,6 +73,13 @@ const _variants = [
     'delivery, extent 1024',
     DeliverySchema(minZoom: 8, maxZoom: 15, extent: 1024),
   ),
+  // The style-compatible schema: OpenMapTiles layer names, so Dark Matter and
+  // friends render it as-is. Compatibility costs size.
+  _Variant('openmaptiles z8-15', OpenMapTilesSchema(minZoom: 8, maxZoom: 15)),
+  _Variant(
+    'openmaptiles, no buildings',
+    OpenMapTilesSchema(minZoom: 8, maxZoom: 15, includeBuildings: false),
+  ),
   // The comparison that matters: everything, everywhere, from z8 — which is
   // what a schema that may not discard anything is forced to do.
   _Variant('keep everything', _KitchenSinkSchema()),
@@ -100,6 +107,9 @@ class _KitchenSinkSchema implements TileSchema {
   List<TileLayerSpec> get layers => const [
     TileLayerSpec(id: 'road', minZoom: 8, maxZoom: 15),
   ];
+
+  @override
+  bool get readsNodes => false;
 
   @override
   ClassifiedFeature? way(GeoWay way) {

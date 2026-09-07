@@ -141,11 +141,22 @@ class TileBuilder {
 
     onProgress?.call('reading nodes');
     final nodes = NodeStore(nodeIds.sortedUnique());
+    final points = <_PointFeature>[];
     await parser.parse(
       inputFile,
       readWays: false,
       readRelations: false,
       onNode: (node) => nodes.set(node.id, node.lat, node.lon),
+      // Only decode the node tag stream when the schema actually wants it.
+      onTaggedNode: !schema.readsNodes
+          ? null
+          : (node) {
+              final classified = schema.node(node);
+              if (classified == null) return;
+              points.add(
+                _PointFeature(node.id, node.lon, node.lat, classified),
+              );
+            },
     );
 
     onProgress?.call('building tiles');
@@ -168,6 +179,7 @@ class TileBuilder {
     for (var zoom = schema.minZoom; zoom <= schema.maxZoom; zoom++) {
       onProgress?.call('zoom $zoom');
       final tiles = _binZoom(features, nodes, zoom, area);
+      _binPoints(points, tiles, zoom, area);
 
       // Within a zoom, ascending tile id; zooms ascend too, so the whole
       // sequence is ascending as the writer requires.
@@ -431,6 +443,43 @@ class TileBuilder {
     return out;
   }
 
+  /// Places point features into the single tile that contains each one.
+  ///
+  /// Unlike a line or an area, a point cannot straddle a boundary, so there is
+  /// nothing to clip and no buffer to honour: it lands in exactly one tile.
+  void _binPoints(
+    List<_PointFeature> points,
+    Map<int, List<_TileFeature>> tiles,
+    int zoom,
+    OsmBoundingBox area,
+  ) {
+    if (points.isEmpty) return;
+
+    final extent = schema.extent;
+    final (areaMinX, areaMinY, areaMaxX, areaMaxY) = _areaTileRange(area, zoom);
+
+    for (final point in points) {
+      if (zoom < point.classified.minZoom) continue;
+
+      final tile = Mercator.tileAt(point.lon, point.lat, zoom);
+      if (tile.x < areaMinX || tile.x > areaMaxX) continue;
+      if (tile.y < areaMinY || tile.y > areaMaxY) continue;
+
+      final local = Mercator.project(
+        point.lon,
+        point.lat,
+        tile,
+        extent: extent,
+      );
+
+      (tiles[TileId.of(tile)] ??= []).add(
+        _TileFeature(point.id, point.classified, [
+          [local],
+        ]),
+      );
+    }
+  }
+
   /// Projects and simplifies each part, dropping any left too small to draw.
   List<List<MvtPoint>> _prepare(
     List<List<int>> parts,
@@ -553,6 +602,20 @@ class _SourceFeature {
     this.classified, {
     this.inner = const [],
   });
+}
+
+/// A tagged node the schema kept, carrying its own coordinate.
+///
+/// Points do not go through the [NodeStore]: that table is sized from ids
+/// collected while reading ways, and a tagged node is only discovered later,
+/// during the node pass itself.
+class _PointFeature {
+  final int id;
+  final double lon;
+  final double lat;
+  final ClassifiedFeature classified;
+
+  const _PointFeature(this.id, this.lon, this.lat, this.classified);
 }
 
 /// A feature clipped into one tile.
