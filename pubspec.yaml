@@ -20,10 +20,3 @@ dev_dependencies:
   # an archive this package writes must be readable by code that shares none
   # of its assumptions. Never a runtime dependency.
   pmtiles: ^2.2.0
-
-# Local development against the sibling package. REMOVE before publishing —
-# `geo_osm_pbf` must be released to pub.dev first, and this package then
-# resolves it by the hosted constraint above.
-dependency_overrides:
-  geo_osm_pbf:
-    path: ../geo_osm_pbf

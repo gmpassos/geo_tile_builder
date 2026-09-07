@@ -3,6 +3,7 @@
 [![pub package](https://img.shields.io/pub/v/geo_tile_builder.svg?logo=dart&logoColor=00b9fc)](https://pub.dev/packages/geo_tile_builder)
 [![Null Safety](https://img.shields.io/badge/null-safety-brightgreen)](https://dart.dev/null-safety)
 [![Dart CI](https://github.com/gmpassos/geo_tile_builder/actions/workflows/dart.yml/badge.svg?branch=master)](https://github.com/gmpassos/geo_tile_builder/actions/workflows/dart.yml)
+[![codecov](https://codecov.io/gh/gmpassos/geo_tile_builder/graph/badge.svg)](https://codecov.io/gh/gmpassos/geo_tile_builder)
 [![GitHub Tag](https://img.shields.io/github/v/tag/gmpassos/geo_tile_builder?logo=git&logoColor=white)](https://github.com/gmpassos/geo_tile_builder/releases)
 [![New Commits](https://img.shields.io/github/commits-since/gmpassos/geo_tile_builder/latest?logo=git&logoColor=white)](https://github.com/gmpassos/geo_tile_builder/network)
 [![Last Commits](https://img.shields.io/github/last-commit/gmpassos/geo_tile_builder?logo=git&logoColor=white)](https://github.com/gmpassos/geo_tile_builder/commits/master)
