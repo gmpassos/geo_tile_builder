@@ -22,9 +22,10 @@ Future<void> main(List<String> args) async {
 
   final output = '${input.replaceAll(RegExp(r'\.osm\.pbf$'), '')}.pmtiles';
 
-  // Zoom range is the biggest size lever after the schema itself: a delivery
-  // map has no use for the whole world, and none for a rider's own street
-  // until they are nearly on it.
+  // Zoom range matters less than it seems — the low zooms are cheap, because
+  // the schema's per-class minimums already keep almost everything out of
+  // them. What the archive costs is decided at the top zooms, by how many
+  // feature classes the schema admits at all. See benchmark/tile_benchmark.dart.
   const schema = DeliverySchema(minZoom: 8, maxZoom: 15);
 
   final watch = Stopwatch()..start();

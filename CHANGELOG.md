@@ -29,6 +29,22 @@
   - `TileBuilder`: the driver — ways pass, nodes pass, then per zoom project,
     simplify, bin, clip and encode, appending in tile-id order.
   - `TileBuildReport`.
+- Benchmark:
+  - `benchmark/tile_benchmark.dart` tiles one extract several ways and compares
+    them, so the package's central claim is measured rather than asserted. On
+    Monaco the delivery schema is **4.2x smaller** than a schema that keeps
+    every road from every zoom with every tag (157 kB vs 658 kB).
+  - It also corrected two claims that were wrong: dropping street names saves
+    about 15%, not "most of it", and narrowing the zoom range saves about 10%,
+    because the per-class minimum zooms already keep the low zooms nearly
+    empty. What the archive costs is decided at the top zooms.
+- `TileBuilder.buffer` now defaults to a 64th of the schema's extent rather
+  than a fixed 64 units.
+  - **Why:** a fixed buffer is a trap at any other extent. At extent 1024 it
+    was a sixteenth of the tile instead of a sixty-fourth, so features spilled
+    into neighbouring tiles and *lowering* the extent made the archive bigger.
+    The benchmark caught it: extent 1024 now produces 126 kB rather than
+    147 kB, and 7,791 features rather than 9,160.
 - Dependencies:
   - Added `geo_osm_pbf: ^1.0.0`.
 - **Scope change:** MBTiles input is dropped. Reading it means reading SQLite,

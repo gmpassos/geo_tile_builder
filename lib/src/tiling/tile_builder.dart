@@ -80,13 +80,22 @@ class TileBuilder {
 
   /// Tile-local padding kept beyond each tile edge, so lines join cleanly
   /// across seams.
-  final int buffer;
+  ///
+  /// Null means *proportional to the schema's extent* — a 64th of a tile,
+  /// which is 64 units at the usual extent of 4096. A fixed buffer is a trap
+  /// at other extents: at extent 1024 a buffer of 64 is a sixteenth of the
+  /// tile rather than a sixty-fourth, so features spill into neighbouring
+  /// tiles that do not need them and the archive grows instead of shrinking.
+  final int? buffer;
 
   const TileBuilder({
     required this.schema,
     this.parser = const OsmPbfParser(),
-    this.buffer = 64,
+    this.buffer,
   });
+
+  /// The buffer actually used, in tile-extent units.
+  int get effectiveBuffer => buffer ?? (schema.extent ~/ 64);
 
   /// Reads [inputFile] and writes a PMTiles archive to [outputFile].
   ///
@@ -201,6 +210,7 @@ class TileBuilder {
   ) {
     final extent = schema.extent;
     final tolerance = schema.simplificationAt(zoom);
+    final buffer = effectiveBuffer;
     final rect = ClipRect.tile(extent: extent, buffer: buffer);
     final out = <int, List<_TileFeature>>{};
 
