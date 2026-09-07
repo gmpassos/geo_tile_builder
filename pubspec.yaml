@@ -13,3 +13,7 @@ dev_dependencies:
   lints: ^6.1.0
   test: ^1.31.1
   dependency_validator: ^5.0.5
+  # Read-only PMTiles parser, used purely as an independent oracle in tests:
+  # an archive this package writes must be readable by code that shares none
+  # of its assumptions. Never a runtime dependency.
+  pmtiles: ^2.2.0

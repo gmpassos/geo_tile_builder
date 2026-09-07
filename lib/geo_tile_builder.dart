@@ -45,3 +45,9 @@ export 'src/pbf/pbf_writer.dart';
 export 'src/mvt/mvt_tile.dart';
 export 'src/mvt/mvt_geometry.dart';
 export 'src/mvt/mvt_encoder.dart';
+
+// PMTiles archive format.
+export 'src/pmtiles/tile_id.dart';
+export 'src/pmtiles/pmtiles_header.dart';
+export 'src/pmtiles/pmtiles_directory.dart';
+export 'src/pmtiles/pmtiles_writer.dart';
