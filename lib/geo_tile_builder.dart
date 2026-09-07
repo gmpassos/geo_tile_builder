@@ -1,0 +1,47 @@
+/// A high-performance, schema-agnostic, offline-first vector tile builder
+/// written in pure Dart.
+///
+/// `geo_tile_builder` encodes [Mapbox Vector Tiles][mvt] and packages them into
+/// [PMTiles][pmtiles] archives — the single-file format MapLibre reads natively
+/// over `pmtiles://` on Android, iOS and the web. It is the rendering half of a
+/// pair: its sibling `geo_route_finder` compiles the same OpenStreetMap extract
+/// into a routing graph, so one download yields both the map a rider sees and
+/// the routes drawn on it.
+///
+/// [mvt]: https://github.com/mapbox/vector-tile-spec
+/// [pmtiles]: https://docs.protomaps.com/pmtiles/
+///
+/// Encoding a tile by hand:
+///
+/// ```dart
+/// final tile = MvtTile(
+///   layers: [
+///     MvtLayer(
+///       name: 'road',
+///       features: [
+///         MvtFeature(
+///           type: MvtGeomType.lineString,
+///           parts: [
+///             [MvtPoint(0, 0), MvtPoint(1024, 512), MvtPoint(4096, 4096)],
+///           ],
+///           attributes: {'class': 'primary', 'name': '5ª Avenida'},
+///         ),
+///       ],
+///     ),
+///   ],
+/// );
+///
+/// final bytes = const MvtEncoder().encode(tile);
+/// ```
+///
+/// The package has **no runtime dependencies**: the protobuf wire format is
+/// written directly by [PbfWriter], and compression uses `dart:io`'s codecs.
+library;
+
+// Protobuf wire format — the shared encoding primitive.
+export 'src/pbf/pbf_writer.dart';
+
+// Mapbox Vector Tile model and encoder.
+export 'src/mvt/mvt_tile.dart';
+export 'src/mvt/mvt_geometry.dart';
+export 'src/mvt/mvt_encoder.dart';

@@ -1,0 +1,15 @@
+name: geo_tile_builder
+description: >-
+  High-performance, schema-agnostic, offline-first vector tile builder in pure
+  Dart. Encodes Mapbox Vector Tiles and writes PMTiles archives, with pluggable
+  tile schemas and OpenStreetMap as the bundled reference source.
+version: 0.1.0
+repository: https://github.com/gmpassos/geo_tile_builder
+
+environment:
+  sdk: ^3.10.9
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.1
+  dependency_validator: ^5.0.5
