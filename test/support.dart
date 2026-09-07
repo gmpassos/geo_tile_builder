@@ -287,6 +287,23 @@ class OsmWay {
   const OsmWay(this.id, this.nodeIds, this.tags);
 }
 
+/// A relation member to encode.
+class OsmMember {
+  final int ref;
+  final String role;
+
+  const OsmMember(this.ref, this.role);
+}
+
+/// A relation to encode into a synthetic extract. Way members only.
+class OsmRelation {
+  final int id;
+  final List<OsmMember> members;
+  final Map<String, String> tags;
+
+  const OsmRelation(this.id, this.members, this.tags);
+}
+
 /// Builds a valid uncompressed `.osm.pbf` containing [nodes] and [ways].
 ///
 /// Coordinates use granularity 100 with zero offsets, so a stored value is
@@ -294,6 +311,7 @@ class OsmWay {
 Uint8List buildOsmPbf({
   required List<OsmNode> nodes,
   required List<OsmWay> ways,
+  List<OsmRelation> relations = const [],
   double minLon = -49.0,
   double minLat = -28.0,
   double maxLon = -48.0,
@@ -351,6 +369,26 @@ Uint8List buildOsmPbf({
       ..writePackedUint(3, vals)
       ..writePackedSInt(8, _deltas(way.nodeIds));
     group.writeMessage(3, w);
+  }
+
+  for (final relation in relations) {
+    final keys = <int>[];
+    final vals = <int>[];
+    relation.tags.forEach((k, v) {
+      keys.add(intern(k));
+      vals.add(intern(v));
+    });
+
+    final r = PbfWriter()
+      ..writeUint(1, relation.id)
+      ..writePackedUint(2, keys)
+      ..writePackedUint(3, vals)
+      ..writePackedUint(8, [for (final m in relation.members) intern(m.role)])
+      // Member ids are delta-encoded against the previous member.
+      ..writePackedSInt(9, _deltas([for (final m in relation.members) m.ref]))
+      // Type 1 is WAY; this builder encodes way members only.
+      ..writePackedUint(10, [for (final _ in relation.members) 1]);
+    group.writeMessage(4, r);
   }
 
   final table = PbfWriter();

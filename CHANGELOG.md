@@ -1,3 +1,39 @@
+## 0.3.0
+
+- **Areas.** Polygons are now produced, from both closed ways and multipolygon
+  relations. Verified end to end and on screen: Monaco's harbour basins render
+  as basins, not as an inverted fill flooding the tile — which is what a
+  winding mistake looks like.
+- `RingBuilder` (new):
+  - `assemble` joins a relation's member ways into closed rings. Members arrive
+    in no order and no consistent direction, so fragments are indexed by both
+    endpoints, reversed where needed, and chained until a ring closes.
+    Fragments that never close are dropped: an unclosed boundary is not an
+    area, and regional extracts contain them routinely.
+  - `orient` imposes winding — exterior positive, holes negative in tile
+    coordinates — rather than trusting source data, which respects no
+    convention.
+  - `nest` attaches each hole to the **smallest** exterior ring containing it,
+    because rings nest (an island in a lake on an island) and choosing the
+    largest container punches the hole through the wrong shape. Holes inside
+    nothing are dropped rather than guessed at.
+  - `containsPoint`, even–odd ray test.
+- `TileBuilder`:
+  - Added a relations pass, run **first** — a multipolygon's member ways
+    usually carry no tags, so which geometry to retain is only knowable once
+    the relations are known.
+  - Polygons are clipped as rings and re-nested per tile, since clipping can
+    remove a hole or cut an area away entirely.
+  - Features now carry multiple parts, so one feature can be several disjoint
+    areas with their own holes.
+- `PmTilesWriter`: `centerZoom` is clamped into the zoom range actually
+  written.
+  - **Why:** a caller passes the centre of the range it *asked* for, which need
+    not be the range it *got*. The mismatch produced a header that strict
+    readers reject outright — found by the `pmtiles` oracle, not by inspection.
+- `TileBuildReport.tiles` documents that zero means an empty archive, whose
+  empty directory strict readers reject: a failed build, not a small one.
+
 ## 0.2.0
 
 - **The OpenStreetMap pipeline.** `.osm.pbf` in, PMTiles basemap out. Verified

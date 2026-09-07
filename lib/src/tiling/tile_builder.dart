@@ -5,6 +5,7 @@ import 'package:geo_osm_pbf/geo_osm_pbf.dart';
 
 import '../geometry/clip.dart';
 import '../geometry/mercator.dart';
+import '../geometry/ring_builder.dart';
 import '../geometry/simplify.dart';
 import '../mvt/mvt_encoder.dart';
 import '../mvt/mvt_tile.dart';
@@ -27,6 +28,11 @@ class TileBuildReport {
   final int resolvedNodes;
 
   /// Tiles that ended up with at least one feature.
+  ///
+  /// Zero means the archive is empty — nothing matched the schema, or nothing
+  /// fell inside the requested bounds. The file is still written, but its
+  /// directory has no entries and strict readers reject such an archive, so
+  /// treat a zero here as a failed build rather than a small one.
   final int tiles;
 
   /// Features written, counted once per tile they appear in.
@@ -59,20 +65,25 @@ class TileBuildReport {
 ///
 /// The pipeline, in order:
 ///
-/// 1. **Ways pass.** Every way is offered to the [TileSchema]; the ones it
-///    keeps are retained with their classification, and their node ids are
-///    collected. Nodes are not touched at all on this pass.
-/// 2. **Nodes pass.** Only the coordinates the first pass asked for are kept,
-///    in the flat arrays of a [NodeStore].
-/// 3. **Per zoom.** Each kept feature is projected once into world coordinates
+/// 1. **Relations pass.** Multipolygons the [TileSchema] wants are noted, along
+///    with the ways they are built from. This comes first because those member
+///    ways usually carry no tags of their own — nothing about a way says it is
+///    part of a lake, so which geometry to retain is only knowable once the
+///    relations are known.
+/// 2. **Ways pass.** Every way is offered to the schema; the ones it keeps are
+///    retained with their classification, as are any that a kept relation is
+///    built from. Node ids are collected. Nodes themselves are not touched.
+/// 3. **Nodes pass.** Only the coordinates the earlier passes asked for are
+///    kept, in the flat arrays of a [NodeStore].
+/// 4. **Per zoom.** Each kept feature is projected once into world coordinates
 ///    at that zoom, simplified once, then clipped into each tile it touches.
 ///    Projecting per zoom rather than per tile is what keeps the trigonometry
 ///    off the inner loop.
-/// 4. **Write.** Tiles are encoded and appended in tile-id order, so the
+/// 5. **Write.** Tiles are encoded and appended in tile-id order, so the
 ///    archive is clustered and deduplicated.
 ///
-/// The two passes read the file twice and keep every kept way in memory. That
-/// is appropriate at the city scale this package targets; the memory that
+/// The passes read the file three times and keep every kept feature in memory.
+/// That is appropriate at the city scale this package targets; the memory that
 /// actually matters — node coordinates — is already flat and typed.
 class TileBuilder {
   final TileSchema schema;
@@ -116,8 +127,17 @@ class TileBuilder {
       );
     }
 
+    // Relations first, because a multipolygon's member ways usually carry no
+    // tags of their own — nothing about the ways says they are part of a lake,
+    // so the geometry to retain is only knowable once the relations are known.
+    onProgress?.call('reading relations');
+    final relations = await _readRelations(inputFile);
+
     onProgress?.call('reading ways');
-    final (features, nodeIds) = await _readWays(inputFile);
+    final (features, nodeIds) = await _readWays(inputFile, relations);
+
+    onProgress?.call('assembling areas');
+    features.addAll(_assembleRelations(relations));
 
     onProgress?.call('reading nodes');
     final nodes = NodeStore(nodeIds.sortedUnique());
@@ -178,26 +198,124 @@ class TileBuilder {
     );
   }
 
-  /// Pass one: classify ways, keeping only what the schema wants.
+  /// Pass one: the relations the schema wants, and the ways they are built of.
+  Future<List<_PendingRelation>> _readRelations(String inputFile) async {
+    final pending = <_PendingRelation>[];
+
+    await parser.parse(
+      inputFile,
+      readNodes: false,
+      readWays: false,
+      onRelation: (relation) {
+        final classified = schema.relation(relation);
+        if (classified == null) return;
+
+        // Only way members contribute geometry. A node member (a label point,
+        // say) has nothing to add to a ring.
+        final members = [
+          for (final m in relation.members)
+            if (m.type == GeoMemberType.way) (m.ref, m.role),
+        ];
+        if (members.isEmpty) return;
+
+        pending.add(_PendingRelation(relation.id, classified, members));
+      },
+    );
+
+    return pending;
+  }
+
+  /// Pass two: classify ways, and retain the geometry of any way a kept
+  /// relation is built from, whether or not the schema wanted the way itself.
   Future<(List<_SourceFeature>, NodeIdCollector)> _readWays(
     String inputFile,
+    List<_PendingRelation> relations,
   ) async {
     final features = <_SourceFeature>[];
     final nodeIds = NodeIdCollector();
+
+    final memberIds = <int>{
+      for (final r in relations)
+        for (final (ref, _) in r.members) ref,
+    };
 
     await parser.parse(
       inputFile,
       readNodes: false,
       readRelations: false,
       onWay: (way) {
+        var wanted = false;
+
+        if (memberIds.contains(way.id)) {
+          for (final relation in relations) {
+            relation.geometry[way.id] = way.nodeIds;
+          }
+          wanted = true;
+        }
+
         final classified = schema.way(way);
-        if (classified == null) return;
-        features.add(_SourceFeature(way.id, way.nodeIds, classified));
-        nodeIds.addAll(way.nodeIds);
+        if (classified != null) {
+          features.add(
+            _SourceFeature(way.id, [
+              _asPart(way.nodeIds, classified.type),
+            ], classified),
+          );
+          wanted = true;
+        }
+
+        if (wanted) nodeIds.addAll(way.nodeIds);
       },
     );
 
     return (features, nodeIds);
+  }
+
+  /// A closed way used as an area repeats its first node; rings do not.
+  List<int> _asPart(List<int> nodeIds, MvtGeomType type) {
+    if (type != MvtGeomType.polygon) return nodeIds;
+    if (nodeIds.length > 1 && nodeIds.first == nodeIds.last) {
+      return nodeIds.sublist(0, nodeIds.length - 1);
+    }
+    return nodeIds;
+  }
+
+  /// Joins each kept relation's member ways into rings.
+  ///
+  /// A relation whose outer ring cannot be closed produces nothing: an
+  /// unclosed boundary is not an area, and guessing at one draws a shape that
+  /// is not in the data.
+  List<_SourceFeature> _assembleRelations(List<_PendingRelation> relations) {
+    final out = <_SourceFeature>[];
+
+    for (final relation in relations) {
+      final outerFragments = <List<int>>[];
+      final innerFragments = <List<int>>[];
+
+      for (final (ref, role) in relation.members) {
+        final geometry = relation.geometry[ref];
+        if (geometry == null || geometry.length < 2) continue;
+        // An empty role means outer: old-style multipolygons leave it off.
+        if (role == 'inner') {
+          innerFragments.add(geometry);
+        } else {
+          outerFragments.add(geometry);
+        }
+      }
+
+      final outer = RingBuilder.assemble(outerFragments);
+      if (outer.isEmpty) continue;
+
+      out.add(
+        _SourceFeature(
+          relation.id,
+          outer,
+          relation.classified,
+          inner: RingBuilder.assemble(innerFragments),
+        ),
+      );
+    }
+
+    return out;
   }
 
   /// Projects, simplifies and clips every feature into the tiles it touches at
@@ -220,21 +338,38 @@ class TileBuilder {
     for (final feature in features) {
       if (zoom < feature.classified.minZoom) continue;
 
-      final world = _project(feature.nodeIds, nodes, zoom, extent);
-      if (world.length < 2) continue;
+      final polygon = feature.classified.type == MvtGeomType.polygon;
+      // A ring needs three vertices to be an area; a line needs two.
+      final minimum = polygon ? 3 : 2;
 
-      final simplified = Simplify.dedupe(
-        Simplify.douglasPeucker(world, tolerance),
+      final outer = _prepare(
+        feature.outer,
+        nodes,
+        zoom,
+        extent,
+        tolerance,
+        minimum,
       );
-      if (simplified.length < 2) continue;
+      if (outer.isEmpty) continue;
 
-      var minX = simplified.first.x, maxX = minX;
-      var minY = simplified.first.y, maxY = minY;
-      for (final p in simplified) {
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
+      final inner = _prepare(
+        feature.inner,
+        nodes,
+        zoom,
+        extent,
+        tolerance,
+        minimum,
+      );
+
+      var minX = outer.first.first.x, maxX = minX;
+      var minY = outer.first.first.y, maxY = minY;
+      for (final part in outer) {
+        for (final p in part) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
       }
 
       final (tx0, ty0, tx1, ty1) = Mercator.tileRangeOfWorld(
@@ -252,18 +387,38 @@ class TileBuilder {
           if (ty < areaMinY || ty > areaMaxY) continue;
 
           final tile = Zxy(zoom, tx, ty);
-          final local = [
-            for (final p in simplified)
-              Mercator.toLocal(p, tile, extent: extent),
+          List<MvtPoint> local(List<MvtPoint> part) => [
+            for (final p in part) Mercator.toLocal(p, tile, extent: extent),
           ];
 
-          final parts = Clip.polyline(local, rect);
-          if (parts.isEmpty) continue;
+          final List<List<MvtPoint>> cleaned;
+          if (polygon) {
+            // Rings are clipped whole and re-nested, because clipping can drop
+            // a hole entirely or cut an area down to nothing.
+            final clippedOuter = [
+              for (final part in outer)
+                if (Clip.ring(local(part), rect) case final r
+                    when r.length >= 3)
+                  r,
+            ];
+            if (clippedOuter.isEmpty) continue;
 
-          final cleaned = [
-            for (final part in parts)
-              if (Simplify.dedupe(part).length >= 2) Simplify.dedupe(part),
-          ];
+            final clippedInner = [
+              for (final part in inner)
+                if (Clip.ring(local(part), rect) case final r
+                    when r.length >= 3)
+                  r,
+            ];
+
+            cleaned = RingBuilder.nest(clippedOuter, clippedInner);
+          } else {
+            cleaned = [
+              for (final part in outer)
+                for (final run in Clip.polyline(local(part), rect))
+                  if (Simplify.dedupe(run).length >= 2) Simplify.dedupe(run),
+            ];
+          }
+
           if (cleaned.isEmpty) continue;
 
           (out[TileId.of(tile)] ??= []).add(
@@ -273,6 +428,28 @@ class TileBuilder {
       }
     }
 
+    return out;
+  }
+
+  /// Projects and simplifies each part, dropping any left too small to draw.
+  List<List<MvtPoint>> _prepare(
+    List<List<int>> parts,
+    NodeStore nodes,
+    int zoom,
+    int extent,
+    int tolerance,
+    int minimum,
+  ) {
+    final out = <List<MvtPoint>>[];
+    for (final part in parts) {
+      final world = _project(part, nodes, zoom, extent);
+      if (world.length < minimum) continue;
+      final simplified = Simplify.dedupe(
+        Simplify.douglasPeucker(world, tolerance),
+      );
+      if (simplified.length < minimum) continue;
+      out.add(simplified);
+    }
     return out;
   }
 
@@ -344,13 +521,38 @@ class TileBuilder {
       File(path).writeAsBytes(bytes, flush: true);
 }
 
-/// A way the schema kept, before any projection.
-class _SourceFeature {
+/// A relation the schema kept, waiting for its member geometry.
+class _PendingRelation {
   final int id;
-  final List<int> nodeIds;
   final ClassifiedFeature classified;
 
-  const _SourceFeature(this.id, this.nodeIds, this.classified);
+  /// Way members as `(id, role)`, in the order the relation listed them.
+  final List<(int, String)> members;
+
+  /// Member way id to its node ids, filled in during the ways pass.
+  final Map<int, List<int>> geometry = {};
+
+  _PendingRelation(this.id, this.classified, this.members);
+}
+
+/// A feature the schema kept, still in node-id space.
+class _SourceFeature {
+  final int id;
+
+  /// A line's vertices, or a polygon's exterior rings.
+  final List<List<int>> outer;
+
+  /// Interior rings. Always empty for lines.
+  final List<List<int>> inner;
+
+  final ClassifiedFeature classified;
+
+  const _SourceFeature(
+    this.id,
+    this.outer,
+    this.classified, {
+    this.inner = const [],
+  });
 }
 
 /// A feature clipped into one tile.

@@ -50,6 +50,7 @@ export 'src/mvt/mvt_encoder.dart';
 export 'src/geometry/mercator.dart';
 export 'src/geometry/simplify.dart';
 export 'src/geometry/clip.dart';
+export 'src/geometry/ring_builder.dart';
 
 // Schema — the extension point deciding what a map contains.
 export 'src/schema/tile_schema.dart';

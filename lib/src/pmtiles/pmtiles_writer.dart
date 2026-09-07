@@ -53,6 +53,9 @@ class PmTilesWriter {
   final double maxLat;
   final double? centerLon;
   final double? centerLat;
+
+  /// Preferred opening zoom. Clamped into the range actually written, since a
+  /// centre outside it makes the archive invalid.
   final int? centerZoom;
 
   /// Unique tile blobs, in the order they were first seen.
@@ -218,6 +221,16 @@ class PmTilesWriter {
 
     final (rootBytes, leafBytes) = _buildDirectories();
 
+    // The zoom range is whatever was actually written, not what the caller
+    // intended, and the centre has to sit inside it. A caller naturally passes
+    // the centre of the range it *asked* for, which need not be the range it
+    // *got* — an area with content at one zoom only, or none at all. Readers
+    // validate this and reject the archive outright, so clamp rather than
+    // emit something unopenable.
+    final minZoom = _entries.isEmpty ? 0 : _minZoom;
+    final maxZoom = _entries.isEmpty ? 0 : _maxZoom;
+    final center = (centerZoom ?? minZoom).clamp(minZoom, maxZoom);
+
     const rootOffset = PmTilesHeader.byteLength;
     final metadataOffset = rootOffset + rootBytes.length;
     final leafOffset = metadataOffset + metadataBytes.length;
@@ -239,13 +252,13 @@ class PmTilesWriter {
       internalCompression: internalCompression,
       tileCompression: tileCompression,
       tileType: tileType,
-      minZoom: _entries.isEmpty ? 0 : _minZoom,
-      maxZoom: _entries.isEmpty ? 0 : _maxZoom,
+      minZoom: minZoom,
+      maxZoom: maxZoom,
       minLon: minLon,
       minLat: minLat,
       maxLon: maxLon,
       maxLat: maxLat,
-      centerZoom: centerZoom ?? (_entries.isEmpty ? 0 : _minZoom),
+      centerZoom: center,
       centerLon: centerLon ?? (minLon + maxLon) / 2,
       centerLat: centerLat ?? (minLat + maxLat) / 2,
     );
