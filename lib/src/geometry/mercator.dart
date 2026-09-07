@@ -86,6 +86,47 @@ abstract final class Mercator {
     );
   }
 
+  /// Projects [lon]/[lat] into **world** coordinates at [zoom]: tile-extent
+  /// units measured from the top-left of the whole map.
+  ///
+  /// This is the space a pipeline should do its work in. A way projected once
+  /// per zoom can then be simplified once, and every tile that touches it is a
+  /// subtraction away — whereas projecting per tile repeats the trigonometry
+  /// for every tile the way crosses.
+  ///
+  /// The values stay well inside 64-bit integers: at zoom 15 with extent 4096
+  /// the world is 134,217,728 units across.
+  static MvtPoint world(double lon, double lat, int zoom, {int extent = 4096}) {
+    final scale = (1 << zoom).toDouble() * extent;
+    return MvtPoint((xOf(lon) * scale).round(), (yOf(lat) * scale).round());
+  }
+
+  /// Translates a world coordinate into [tile]'s local grid.
+  static MvtPoint toLocal(MvtPoint world, Zxy tile, {int extent = 4096}) =>
+      MvtPoint(world.x - tile.x * extent, world.y - tile.y * extent);
+
+  /// The range of tiles at [zoom] spanned by world x/y bounds.
+  ///
+  /// Returned as `(minTileX, minTileY, maxTileX, maxTileY)`, clamped to the
+  /// grid. Feeding it a feature's bounding box gives the candidate tiles to
+  /// clip that feature against.
+  static (int, int, int, int) tileRangeOfWorld(
+    int minX,
+    int minY,
+    int maxX,
+    int maxY,
+    int zoom, {
+    int extent = 4096,
+  }) {
+    final last = (1 << zoom) - 1;
+    return (
+      (minX / extent).floor().clamp(0, last),
+      (minY / extent).floor().clamp(0, last),
+      (maxX / extent).floor().clamp(0, last),
+      (maxY / extent).floor().clamp(0, last),
+    );
+  }
+
   /// The geographic bounds of [tile], as `(minLon, minLat, maxLon, maxLat)`.
   static (double, double, double, double) boundsOf(Zxy tile) {
     final scale = (1 << tile.z).toDouble();

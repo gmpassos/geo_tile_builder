@@ -46,8 +46,18 @@ export 'src/mvt/mvt_tile.dart';
 export 'src/mvt/mvt_geometry.dart';
 export 'src/mvt/mvt_encoder.dart';
 
-// Geometry — projection between geography and tile space.
+// Geometry — projection, generalisation and clipping.
 export 'src/geometry/mercator.dart';
+export 'src/geometry/simplify.dart';
+export 'src/geometry/clip.dart';
+
+// Schema — the extension point deciding what a map contains.
+export 'src/schema/tile_schema.dart';
+export 'src/schema/delivery_schema.dart';
+
+// OpenStreetMap pipeline.
+export 'src/osm/node_store.dart';
+export 'src/tiling/tile_builder.dart';
 
 // PMTiles archive format.
 export 'src/pmtiles/tile_id.dart';

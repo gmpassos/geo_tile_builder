@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:geo_tile_builder/geo_tile_builder.dart';
@@ -259,4 +260,149 @@ List<List<MvtPoint>> decodeMvtGeometry(MvtGeomType type, List<int> geometry) {
   }
 
   return parts;
+}
+
+// ---------------------------------------------------------------------------
+// Synthetic OpenStreetMap input.
+//
+// Built with this package's own [PbfWriter], since an `.osm.pbf` is protobuf
+// too. As elsewhere, binary inputs are generated rather than committed.
+// ---------------------------------------------------------------------------
+
+/// A node to encode into a synthetic extract.
+class OsmNode {
+  final int id;
+  final double lat;
+  final double lon;
+
+  const OsmNode(this.id, this.lat, this.lon);
+}
+
+/// A way to encode into a synthetic extract.
+class OsmWay {
+  final int id;
+  final List<int> nodeIds;
+  final Map<String, String> tags;
+
+  const OsmWay(this.id, this.nodeIds, this.tags);
+}
+
+/// Builds a valid uncompressed `.osm.pbf` containing [nodes] and [ways].
+///
+/// Coordinates use granularity 100 with zero offsets, so a stored value is
+/// simply degrees / 1e-7.
+Uint8List buildOsmPbf({
+  required List<OsmNode> nodes,
+  required List<OsmWay> ways,
+  double minLon = -49.0,
+  double minLat = -28.0,
+  double maxLon = -48.0,
+  double maxLat = -26.0,
+}) {
+  final bbox = PbfWriter()
+    ..writeSInt(1, (minLon * 1e9).round()) // left
+    ..writeSInt(2, (maxLon * 1e9).round()) // right
+    ..writeSInt(3, (maxLat * 1e9).round()) // top
+    ..writeSInt(4, (minLat * 1e9).round()); // bottom
+
+  final header = PbfWriter()
+    ..writeMessage(1, bbox)
+    ..writeString(4, 'OsmSchema-V0.6')
+    ..writeString(4, 'DenseNodes');
+
+  // String table, interned while building the group below.
+  final strings = <String>[''];
+  final index = <String, int>{};
+  int intern(String s) {
+    if (s.isEmpty) return 0;
+    return index.putIfAbsent(s, () {
+      strings.add(s);
+      return strings.length - 1;
+    });
+  }
+
+  final group = PbfWriter();
+
+  if (nodes.isNotEmpty) {
+    final dense = PbfWriter()
+      ..writePackedSInt(1, _deltas([for (final n in nodes) n.id]))
+      ..writePackedSInt(
+        8,
+        _deltas([for (final n in nodes) (n.lat / 1e-7).round()]),
+      )
+      ..writePackedSInt(
+        9,
+        _deltas([for (final n in nodes) (n.lon / 1e-7).round()]),
+      );
+    group.writeMessage(2, dense);
+  }
+
+  for (final way in ways) {
+    final keys = <int>[];
+    final vals = <int>[];
+    way.tags.forEach((k, v) {
+      keys.add(intern(k));
+      vals.add(intern(v));
+    });
+
+    final w = PbfWriter()
+      ..writeUint(1, way.id)
+      ..writePackedUint(2, keys)
+      ..writePackedUint(3, vals)
+      ..writePackedSInt(8, _deltas(way.nodeIds));
+    group.writeMessage(3, w);
+  }
+
+  final table = PbfWriter();
+  for (final s in strings) {
+    table.writeString(1, s);
+  }
+
+  final block = PbfWriter()
+    ..writeMessage(1, table)
+    ..writeMessage(2, group);
+
+  return Uint8List.fromList([
+    ..._osmBlob('OSMHeader', header.toBytes()),
+    ..._osmBlob('OSMData', block.toBytes()),
+  ]);
+}
+
+/// Writes [bytes] to a fresh temporary `.osm.pbf` and returns its path.
+String writeTempOsmPbf(Uint8List bytes) {
+  final dir = Directory.systemTemp.createTempSync('gtb_osm_');
+  final file = File('${dir.path}/sample.osm.pbf');
+  file.writeAsBytesSync(bytes);
+  return file.path;
+}
+
+/// Wraps a block in a BlobHeader + Blob pair with its 4-byte length prefix.
+List<int> _osmBlob(String type, Uint8List payload) {
+  final blob = PbfWriter()..writeBytes(1, payload); // field 1: raw
+  final blobBytes = blob.toBytes();
+
+  final header = PbfWriter()
+    ..writeString(1, type)
+    ..writeUint(3, blobBytes.length);
+  final headerBytes = header.toBytes();
+
+  final length = headerBytes.length;
+  return [
+    (length >> 24) & 0xFF,
+    (length >> 16) & 0xFF,
+    (length >> 8) & 0xFF,
+    length & 0xFF,
+    ...headerBytes,
+    ...blobBytes,
+  ];
+}
+
+List<int> _deltas(List<int> values) {
+  final out = <int>[];
+  var previous = 0;
+  for (final v in values) {
+    out.add(v - previous);
+    previous = v;
+  }
+  return out;
 }

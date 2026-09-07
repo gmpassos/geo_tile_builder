@@ -3,11 +3,14 @@ description: >-
   High-performance, schema-agnostic, offline-first vector tile builder in pure
   Dart. Encodes Mapbox Vector Tiles and writes PMTiles archives, with pluggable
   tile schemas and OpenStreetMap as the bundled reference source.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/gmpassos/geo_tile_builder
 
 environment:
   sdk: ^3.10.9
+
+dependencies:
+  geo_osm_pbf: ^1.0.0
 
 dev_dependencies:
   lints: ^6.1.0
@@ -17,3 +20,10 @@ dev_dependencies:
   # an archive this package writes must be readable by code that shares none
   # of its assumptions. Never a runtime dependency.
   pmtiles: ^2.2.0
+
+# Local development against the sibling package. REMOVE before publishing —
+# `geo_osm_pbf` must be released to pub.dev first, and this package then
+# resolves it by the hosted constraint above.
+dependency_overrides:
+  geo_osm_pbf:
+    path: ../geo_osm_pbf

@@ -1,3 +1,41 @@
+## 0.2.0
+
+- **The OpenStreetMap pipeline.** `.osm.pbf` in, PMTiles basemap out. Verified
+  end to end on real data: Monaco tiles at z8-15 into a 157 kB archive in
+  ~120 ms, and renders in MapLibre Native from a file in device storage.
+- Schema:
+  - `TileSchema` (new extension point): decides which source features become
+    which layers, with which attributes, from which zoom. This is where a map
+    gets small — a schema written for one product may discard what a
+    general-purpose tiler is obliged to keep.
+  - `TileLayerSpec`, `ClassifiedFeature`.
+  - `DeliverySchema`: the bundled worked example. Road network collapsed to
+    eight classes, each with a minimum zoom; water for orientation; no POIs,
+    no place labels, no buildings, no landuse. `class` and `name` only.
+- Geometry:
+  - `Mercator`: added `world`, `toLocal` and `tileRangeOfWorld`, so a feature
+    is projected once per zoom rather than once per tile.
+  - `Simplify`: Ramer–Douglas–Peucker, iterative rather than recursive so a
+    way with tens of thousands of vertices cannot blow the stack, plus
+    `dedupe` for vertices that collapse under quantisation.
+  - `Clip`: Cohen–Sutherland for polylines (returning every run, since a line
+    may leave and re-enter a tile) and Sutherland–Hodgman for rings.
+  - `ClipRect`, including the tile buffer that stops roads breaking at seams.
+- OpenStreetMap:
+  - `NodeIdCollector` and `NodeStore`: node coordinates in flat typed arrays at
+    16 bytes each, looked up by binary search over sorted ids, rather than the
+    boxed `Map<int, GeoNode>` this would otherwise be. An unresolved id reads
+    back as null, never as `(0, 0)`.
+  - `TileBuilder`: the driver — ways pass, nodes pass, then per zoom project,
+    simplify, bin, clip and encode, appending in tile-id order.
+  - `TileBuildReport`.
+- Dependencies:
+  - Added `geo_osm_pbf: ^1.0.0`.
+- **Scope change:** MBTiles input is dropped. Reading it means reading SQLite,
+  which is at odds with this package having no runtime dependencies, and the
+  repackaging path it was meant to serve is already covered by
+  `PmTilesWriter.addEncoded`, which accepts tiles from any producer.
+
 ## 0.1.0
 
 - Protobuf:
