@@ -21,6 +21,13 @@ class DeliverySchema implements TileSchema {
   /// Layer carrying water areas.
   static const String waterLayer = 'water';
 
+  /// Layer carrying the traffic controls a vehicle has to stop at.
+  ///
+  /// Points, not lines. A set of lights is a node on the road, and what a
+  /// driver needs from it is the spot where they will have to stop — not
+  /// anything about its shape.
+  static const String signalLayer = 'signal';
+
   @override
   final int minZoom;
 
@@ -38,12 +45,40 @@ class DeliverySchema implements TileSchema {
   /// orientation, but do not expect them to be the reason a pack is large.
   final bool includeNames;
 
+  /// Whether to carry traffic controls — lights, stop and give-way signs,
+  /// level crossings.
+  ///
+  /// **This is the one option that changes what the build costs to run**, and
+  /// it is worth understanding before turning it off to save space. The tiles
+  /// it adds are small: these are points with one short attribute, there are a
+  /// few thousand in a city against a road network of hundreds of thousands of
+  /// segments, and they start at [signalMinZoom] rather than at [minZoom].
+  ///
+  /// The expense is upstream of the tiles. Node tags live in a packed stream
+  /// that a reader can skip entirely, so a schema that wants *any* node pays
+  /// to decode tens of millions of entries that are almost all untagged shape
+  /// points — see [readsNodes]. That cost is per build, not per pack byte.
+  ///
+  /// Default on, because a navigation map that cannot show a junction's lights
+  /// is the thing this schema exists to serve.
+  final bool includeSignals;
+
   const DeliverySchema({
     this.minZoom = 6,
     this.maxZoom = 15,
     this.extent = 4096,
     this.includeNames = true,
+    this.includeSignals = true,
   });
+
+  /// Where traffic controls start being drawn.
+  ///
+  /// Late, and deliberately. A set of lights is meaningless on a map of a
+  /// whole city — it is worth drawing when the driver is close enough to stop
+  /// at it, which is the zoom guidance actually uses. Emitting them from
+  /// [minZoom] would carry a few thousand points through eight zoom levels
+  /// that will never display one.
+  static const int signalMinZoom = 14;
 
   @override
   String get name => 'delivery';
@@ -64,6 +99,16 @@ class DeliverySchema implements TileSchema {
       description: 'Water areas, for orientation.',
       fields: const {'class': 'String'},
     ),
+    if (includeSignals)
+      TileLayerSpec(
+        id: signalLayer,
+        minZoom: signalMinZoom,
+        maxZoom: maxZoom,
+        description:
+            'Traffic controls a vehicle stops at: lights, stop and give-way '
+            'signs, level crossings.',
+        fields: const {'class': 'String'},
+      ),
   ];
 
   /// OSM `highway` values collapsed into the handful of weights a map actually
@@ -149,14 +194,74 @@ class DeliverySchema implements TileSchema {
     return null;
   }
 
-  /// No node ever becomes a feature: this schema has no place labels and no
-  /// points of interest, which is a large part of why its tiles are small — and
-  /// why the node tag stream is never decoded at all.
+  /// The traffic controls kept, and what each is called in a tile.
+  ///
+  /// Four values, not the dozen OSM offers, and the line is drawn at **things
+  /// that stop a vehicle**. A driver plans around a set of lights; they do not
+  /// plan around a street lamp, a bus stop or a speed camera, and every extra
+  /// tag is points in every tile of every city for ever.
+  ///
+  /// `highway=crossing` is the notable exclusion. It is a pedestrian crossing
+  /// with no signal of its own — there are several per block, they would
+  /// outnumber every other control here by an order of magnitude, and at
+  /// navigation speed the result is a map peppered with dots that mean nothing
+  /// to the person reading it. A *signalised* crossing is tagged
+  /// `crossing=traffic_signals` and is caught below.
+  static const Map<String, String> _highwaySignals = {
+    'traffic_signals': 'traffic_signals',
+    'stop': 'stop',
+    'give_way': 'give_way',
+  };
+
+  /// No node ever becomes a feature unless [includeSignals] is on.
+  ///
+  /// Declared rather than discovered, and not free: node tags live in a packed
+  /// stream a reader can otherwise skip entirely, so saying yes here means
+  /// decoding tens of millions of entries that are almost all untagged shape
+  /// points.
   @override
-  bool get readsNodes => false;
+  bool get readsNodes => includeSignals;
 
   @override
-  ClassifiedFeature? node(GeoTaggedNode node) => null;
+  ClassifiedFeature? node(GeoTaggedNode node) {
+    if (!includeSignals) return null;
+
+    final signal = _signalClass(node.tags);
+    if (signal == null) return null;
+
+    return ClassifiedFeature(
+      layer: signalLayer,
+      type: MvtGeomType.point,
+      minZoom: signalMinZoom < minZoom ? minZoom : signalMinZoom,
+      attributes: {'class': signal},
+    );
+  }
+
+  /// What kind of control this node is, or null for anything else.
+  static String? _signalClass(Map<String, String> tags) {
+    // A railway level crossing first: it is tagged on the railway rather than
+    // the highway, and it is the one control here that can hold a rider for
+    // minutes rather than seconds.
+    final railway = tags['railway'];
+    if (railway == 'level_crossing' || railway == 'crossing') {
+      return 'level_crossing';
+    }
+
+    final highway = tags['highway'];
+
+    // A signalised pedestrian crossing *is* a set of lights, and is tagged as
+    // a crossing rather than as `highway=traffic_signals`. Catching it here is
+    // what keeps the exclusion of plain crossings from also dropping the ones
+    // that stop traffic.
+    if (highway == 'crossing') {
+      final crossing = tags['crossing'];
+      return crossing == 'traffic_signals' || tags['crossing:signals'] == 'yes'
+          ? 'traffic_signals'
+          : null;
+    }
+
+    return highway == null ? null : _highwaySignals[highway];
+  }
 
   /// Water multipolygons are the one relation worth having, and are only
   /// emitted once a builder can assemble rings from member ways.

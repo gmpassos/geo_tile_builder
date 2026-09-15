@@ -38,6 +38,9 @@
 /// written directly by [PbfWriter], and compression uses `dart:io`'s codecs.
 library;
 
+// What version produced an artefact, for a builder that has to record it.
+export 'src/version.dart';
+
 // Protobuf wire format — the shared encoding primitive.
 export 'src/pbf/pbf_writer.dart';
 
