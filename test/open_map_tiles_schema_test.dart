@@ -167,9 +167,18 @@ void main() {
   });
 
   group('OpenMapTilesSchema places', () {
-    test('reads nodes, unlike the delivery schema', () {
+    test('reads nodes unconditionally, where the delivery schema chooses', () {
+      // This schema has place labels and points of interest, so it has no
+      // choice. The delivery schema decodes the node stream only when it is
+      // carrying traffic controls, and can still opt out of the cost.
       expect(_schema.readsNodes, isTrue);
-      expect(const DeliverySchema().readsNodes, isFalse);
+
+      expect(const DeliverySchema().readsNodes, isTrue);
+      expect(
+        const DeliverySchema(includeSignals: false).readsNodes,
+        isFalse,
+        reason: 'a schema carrying no signals must not pay for node tags',
+      );
     });
 
     test('ranks settlements so labels can be prioritised', () {

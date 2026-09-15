@@ -128,8 +128,10 @@ void main() {
       );
     });
 
-    test('emits no features for nodes', () {
-      // No POIs and no place labels is a large part of why the tiles are small.
+    test('emits no features for nodes but traffic controls', () {
+      // No POIs and no place labels is a large part of why the tiles are
+      // small. Traffic controls are the one exception, and they are covered in
+      // `delivery_schema_test.dart`.
       expect(
         schema.node(
           const GeoTaggedNode(
@@ -238,7 +240,13 @@ void main() {
 
       final metadata = await archive.metadata as Map<String, Object?>;
       expect(metadata['name'], 'delivery');
-      expect(metadata['vector_layers'], hasLength(2));
+
+      // Named rather than counted, so adding a layer is a deliberate edit here
+      // rather than a number nudged from 2 to 3.
+      expect([
+        for (final l in metadata['vector_layers'] as List)
+          (l as Map)['id'] as String,
+      ], containsAll(['road', 'water', 'signal']));
     });
 
     test('places roads in the tile that actually contains them', () async {

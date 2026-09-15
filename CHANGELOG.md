@@ -1,3 +1,34 @@
+## 0.4.0
+
+- **Traffic controls.** `DeliverySchema` gains a `signal` point layer carrying
+  the things a vehicle has to stop at: traffic lights, stop and give-way signs,
+  and level crossings. A navigation map that cannot show a junction's lights is
+  missing the one feature at that junction a driver plans around.
+
+  Four classes, not the dozen OSM offers, and the line is drawn at *things that
+  stop a vehicle*. `highway=crossing` is the notable exclusion — an
+  unsignalised pedestrian crossing appears several times a block, would
+  outnumber every other control by an order of magnitude, and means nothing to
+  a driver at speed. A **signalised** crossing (`crossing=traffic_signals`, or
+  `crossing:signals=yes`) is a set of lights and is kept, which is why the
+  exclusion is a specific test rather than a blanket one.
+
+  Emitted from z14 rather than from the schema's `minZoom`: a set of lights is
+  meaningless on a map of a whole city, and carrying a few thousand points
+  through eight zoom levels that never display one is pure archive weight.
+
+- **`readsNodes` is now a decision rather than a constant.** `DeliverySchema`
+  reads the node stream only when it is carrying signals, and
+  `includeSignals: false` restores the old behaviour exactly — no signal layer,
+  no node decoding.
+
+  That flag is the real cost of this change and it is worth stating plainly:
+  node tags live in a packed stream a reader can otherwise skip whole, so
+  wanting *any* node means decoding tens of millions of entries that are almost
+  all untagged shape points. The cost is per build, not per pack byte — the
+  tiles themselves grow by points with one short attribute, a few thousand in a
+  city against a road network of hundreds of thousands of segments.
+
 ## 0.3.0
 
 - **Areas.** Polygons are now produced, from both closed ways and multipolygon
