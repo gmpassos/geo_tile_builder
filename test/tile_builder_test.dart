@@ -304,6 +304,116 @@ void main() {
       expect(report.features, greaterThan(report.keptWays));
     });
 
+    group('traffic controls, end to end', () {
+      // The junction of the avenue and the cross street, with a set of lights
+      // on it and a plain pedestrian crossing a little further along. Reaching
+      // a tile is a different question from being classified correctly, and
+      // only this answers it: the schema declaring a layer proves nothing if
+      // `readsNodes` never reaches the reader.
+      Future<(String, TileBuildReport)> buildWithSignals({
+        bool includeSignals = true,
+      }) async {
+        final input = writeTempOsmPbf(
+          buildOsmPbf(
+            nodes: _nodes,
+            ways: _ways,
+            taggedNodes: const {
+              // Node 2 is the junction the avenue and the cross street share.
+              2: {'highway': 'traffic_signals'},
+              // Node 6 is on the residential street.
+              6: {'highway': 'crossing', 'crossing': 'zebra'},
+            },
+          ),
+        );
+
+        final dir = Directory(input).parent;
+        final output = '${dir.path}/signals.pmtiles';
+
+        final report = await TileBuilder(
+          schema: DeliverySchema(
+            minZoom: 10,
+            maxZoom: 15,
+            includeSignals: includeSignals,
+          ),
+        ).build(inputFile: input, outputFile: output, bounds: _bbox);
+
+        return (output, report);
+      }
+
+      Future<Set<Object?>> signalClassesAt(String path, int zoom) async {
+        final archive = await oracle.PmTilesArchive.fromBytes(
+          Uint8List.fromList(File(path).readAsBytesSync()),
+          strict: true,
+        );
+        addTearDown(archive.close);
+
+        final tile = Mercator.tileAt(-48.635, -26.995, zoom);
+        final bytes = (await archive.tile(TileId.of(tile))).bytes();
+        final decoded = decodeMvtTile(Uint8List.fromList(bytes));
+
+        return {
+          for (final l in decoded.layers.where(
+            (l) => l.name == DeliverySchema.signalLayer,
+          ))
+            for (final f in l.features) f.attributes['class'],
+        };
+      }
+
+      test('a light on a junction reaches the tile', () async {
+        final (path, _) = await buildWithSignals();
+        addTearDown(() => File(path).parent.deleteSync(recursive: true));
+
+        expect(
+          await signalClassesAt(path, 15),
+          contains('traffic_signals'),
+          reason: 'the node stream has to be read, not just classified',
+        );
+      });
+
+      test('and a plain crossing does not', () async {
+        // The exclusion, proven through the pipeline rather than at the
+        // schema: several per block would drown the layer.
+        final (path, _) = await buildWithSignals();
+        addTearDown(() => File(path).parent.deleteSync(recursive: true));
+
+        final classes = await signalClassesAt(path, 15);
+        expect(classes, isNot(contains('crossing')));
+        expect(classes, equals({'traffic_signals'}));
+      });
+
+      test('nothing is drawn below the zoom they earn', () async {
+        final (path, _) = await buildWithSignals();
+        addTearDown(() => File(path).parent.deleteSync(recursive: true));
+
+        // `signalMinZoom` is 14; a set of lights on a map of a whole city is
+        // noise, and carrying it down there is pure archive weight.
+        expect(await signalClassesAt(path, 13), isEmpty);
+        expect(await signalClassesAt(path, 14), isNotEmpty);
+      });
+
+      test('switching them off leaves no layer and reads no nodes', () async {
+        // The flag has to reach the *builder*, not just the classification —
+        // otherwise the expensive half happens anyway and the option is a lie.
+        final (path, _) = await buildWithSignals(includeSignals: false);
+        addTearDown(() => File(path).parent.deleteSync(recursive: true));
+
+        final archive = await oracle.PmTilesArchive.fromBytes(
+          Uint8List.fromList(File(path).readAsBytesSync()),
+          strict: true,
+        );
+        addTearDown(archive.close);
+
+        final metadata = await archive.metadata as Map<String, Object?>;
+
+        expect([
+          for (final l in metadata['vector_layers'] as List)
+            (l as Map)['id'] as String,
+        ], isNot(contains(DeliverySchema.signalLayer)));
+
+        expect(await signalClassesAt(path, 15), isEmpty);
+      });
+    });
+
     test('restricts output to the given bounds', () async {
       final input = _writeExtract();
       final dir = Directory(input).parent;

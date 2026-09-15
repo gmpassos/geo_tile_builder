@@ -31,8 +31,23 @@ void main() {
         (l) => l.id == DeliverySchema.signalLayer,
       );
 
+      // The number, not just the constant compared against itself — lowering
+      // it is a size decision and should have to be made here too.
+      expect(DeliverySchema.signalMinZoom, equals(14));
       expect(signals.minZoom, equals(DeliverySchema.signalMinZoom));
       expect(signals.minZoom, greaterThan(_schema.minZoom));
+      expect(signals.maxZoom, equals(_schema.maxZoom));
+    });
+
+    test('declares the `class` a style switches on', () {
+      // The contract with `MapPackStore.styleJsonFor`, which paints by
+      // `['get', 'class']`. A layer that stopped carrying it would render one
+      // flat colour and nothing would say so.
+      final signals = _schema.layers.firstWhere(
+        (l) => l.id == DeliverySchema.signalLayer,
+      );
+
+      expect(signals.toMetadata()['fields'], contains('class'));
     });
 
     test('disappears entirely when signals are off', () {
@@ -81,6 +96,49 @@ void main() {
       expect(
         _schema.node(_node({'railway': 'level_crossing'}))!.attributes['class'],
         equals('level_crossing'),
+      );
+    });
+
+    test('a railway crossing wins over whatever else the node is', () {
+      // A level crossing is routinely also tagged as a highway crossing, and
+      // sometimes carries `crossing=traffic_signals` for its own lights. It is
+      // the more consequential of the two — minutes rather than seconds — so
+      // the railway tag is read first, and this pins that order.
+      expect(
+        _schema
+            .node(
+              _node({
+                'railway': 'level_crossing',
+                'highway': 'crossing',
+                'crossing': 'traffic_signals',
+              }),
+            )!
+            .attributes['class'],
+        equals('level_crossing'),
+      );
+    });
+
+    test('a crossing tag alone is not a junction', () {
+      // `crossing=traffic_signals` describes *how* a crossing works. Without
+      // `highway=crossing` there is no crossing for it to describe, and
+      // matching on it alone would pick up stray tagging.
+      expect(_schema.node(_node({'crossing': 'traffic_signals'})), isNull);
+    });
+
+    test('lights stay lights whatever else is on the node', () {
+      // Junction nodes accumulate tags — a name, a direction, an operator.
+      // None of them change what it is.
+      expect(
+        _schema
+            .node(
+              _node({
+                'highway': 'traffic_signals',
+                'traffic_signals:direction': 'forward',
+                'name': 'Cruzamento Central',
+              }),
+            )!
+            .attributes['class'],
+        equals('traffic_signals'),
       );
     });
 
