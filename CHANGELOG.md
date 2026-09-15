@@ -29,6 +29,18 @@
   tiles themselves grow by points with one short attribute, a few thousand in a
   city against a road network of hundreds of thousands of segments.
 
+- **`geoTileBuilderVersion` and `geoTileBuilderId`**, so a tool that bakes an
+  artefact can record which release baked it. Dart cannot read `pubspec.yaml`
+  at runtime and a compiled executable has none beside it, so the version has
+  to be repeated in code; `test/version_test.dart` reads the pubspec and
+  compares, which is what keeps the repetition honest.
+
+  The motivation is a real defect rather than tidiness: the map packs in
+  production carry an empty builder string, because the only way to set one
+  was a hand-typed `--builder-version` that defaulted to nothing. And a build
+  recorded as `0.3.0` while 0.4.0 ran would be worse than one recorded as
+  nothing, because it looks like an answer.
+
 ## 0.3.0
 
 - **Areas.** Polygons are now produced, from both closed ways and multipolygon
